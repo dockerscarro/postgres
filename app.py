@@ -1,177 +1,121 @@
 import os
-import requests
 import psycopg2
+import requests
 import logging
 
-# ================= ENV =================
+logging.basicConfig(level=logging.INFO)
 
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
 
-POSTGRES_HOST = os.getenv("POSTGRES_HOST")
 POSTGRES_DB = os.getenv("POSTGRES_DB")
 POSTGRES_USER = os.getenv("POSTGRES_USER")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", 5432)
 
-HUBSPOT_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
+# Since DB is inside same container
+POSTGRES_HOST = "localhost"
 
-# ================= LOGGING =================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
+def create_database():
+    conn = psycopg2.connect(
+        dbname="postgres",
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
 
-# ================= DB =================
+    cur.execute(f"SELECT 1 FROM pg_database WHERE datname='{POSTGRES_DB}'")
+    exists = cur.fetchone()
+
+    if not exists:
+        logging.info(f"Creating database {POSTGRES_DB}")
+        cur.execute(f"CREATE DATABASE {POSTGRES_DB}")
+
+    cur.close()
+    conn.close()
+
 
 def get_connection():
     return psycopg2.connect(
-        host=POSTGRES_HOST,
-        database=POSTGRES_DB,
+        dbname=POSTGRES_DB,
         user=POSTGRES_USER,
         password=POSTGRES_PASSWORD,
+        host=POSTGRES_HOST,
         port=POSTGRES_PORT
     )
+
 
 def create_table(conn):
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS hubspot_contacts (
-            hubspot_id TEXT PRIMARY KEY,
-            first_name TEXT,
-            last_name TEXT,
+            id TEXT PRIMARY KEY,
             email TEXT,
-            business_name TEXT,
-            vat_number TEXT,
-            country_ TEXT,
-            number_of_users INTEGER,
-            vendor TEXT,
-            lead_status TEXT,
-            created_date TIMESTAMP,
-            last_activity_date TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT now()
-        );
+            firstname TEXT,
+            lastname TEXT,
+            phone TEXT,
+            lastmodifieddate TIMESTAMP
+        )
     """)
     conn.commit()
     cur.close()
 
-# ================= FETCH =================
 
 def fetch_contacts():
-    headers = {
-        "Authorization": f"Bearer {HUBSPOT_API_KEY}"
-    }
+    url = "https://api.hubapi.com/crm/v3/objects/contacts"
+    headers = {"Authorization": f"Bearer {HUBSPOT_API_KEY}"}
+    params = {"limit": 100}
 
-    params = {
-        "limit": 100,
-        "properties": [
-            "firstname",
-            "lastname",
-            "email",
-            "business_name",
-            "vat_number",
-            "country_",
-            "number_of_users",
-            "vendor",
-            "lead_status",
-            "createdate",
-            "last_activity_date"
-        ]
-    }
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    return response.json().get("results", [])
 
-    contacts = []
-    after = None
 
-    while True:
-        if after:
-            params["after"] = after
-
-        response = requests.get(HUBSPOT_URL, headers=headers, params=params)
-        response.raise_for_status()
-
-        data = response.json()
-        contacts.extend(data.get("results", []))
-
-        paging = data.get("paging")
-        if paging and "next" in paging:
-            after = paging["next"]["after"]
-        else:
-            break
-
-    return contacts
-
-# ================= LOAD =================
-
-def load_contacts(conn, records):
+def upsert_contacts(conn, contacts):
     cur = conn.cursor()
 
-    for contact in records:
+    for contact in contacts:
         props = contact.get("properties", {})
-
         cur.execute("""
-            INSERT INTO hubspot_contacts (
-                hubspot_id,
-                first_name,
-                last_name,
-                email,
-                business_name,
-                vat_number,
-                country_,
-                number_of_users,
-                vendor,
-                lead_status,
-                created_date,
-                last_activity_date,
-                updated_at
-            )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
-            ON CONFLICT (hubspot_id)
+            INSERT INTO hubspot_contacts (id, email, firstname, lastname, phone, lastmodifieddate)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id)
             DO UPDATE SET
-                first_name = EXCLUDED.first_name,
-                last_name = EXCLUDED.last_name,
                 email = EXCLUDED.email,
-                business_name = EXCLUDED.business_name,
-                vat_number = EXCLUDED.vat_number,
-                country_ = EXCLUDED.country_,
-                number_of_users = EXCLUDED.number_of_users,
-                vendor = EXCLUDED.vendor,
-                lead_status = EXCLUDED.lead_status,
-                created_date = EXCLUDED.created_date,
-                last_activity_date = EXCLUDED.last_activity_date,
-                updated_at = now();
+                firstname = EXCLUDED.firstname,
+                lastname = EXCLUDED.lastname,
+                phone = EXCLUDED.phone,
+                lastmodifieddate = EXCLUDED.lastmodifieddate
         """, (
-            contact["id"],
+            contact.get("id"),
+            props.get("email"),
             props.get("firstname"),
             props.get("lastname"),
-            props.get("email"),
-            props.get("business_name"),
-            props.get("vat_number"),
-            props.get("country_"),
-            int(props.get("number_of_users") or 0),
-            props.get("vendor"),
-            props.get("lead_status"),
-            props.get("createdate"),
-            props.get("last_activity_date")
+            props.get("phone"),
+            props.get("lastmodifieddate")
         ))
 
     conn.commit()
     cur.close()
 
-# ================= MAIN =================
 
 def run():
-    logging.info("🚀 HubSpot Sync Started")
+    logging.info("Starting HubSpot Sync")
+
+    create_database()
 
     conn = get_connection()
     create_table(conn)
 
     contacts = fetch_contacts()
-    logging.info(f"Fetched {len(contacts)} contacts")
-
-    load_contacts(conn, contacts)
+    upsert_contacts(conn, contacts)
 
     conn.close()
-    logging.info("✅ Sync Completed Successfully")
+    logging.info("Sync Completed Successfully")
+
 
 if __name__ == "__main__":
     run()
