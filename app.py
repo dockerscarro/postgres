@@ -6,6 +6,7 @@ from contextlib import closing
 
 # ---------------- ENV CONFIG ----------------
 
+
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
 
 PG_CONFIG = {
