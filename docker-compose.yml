@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  hubspot_db:
+    image: postgres:17
+    container_name: hubspot_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+    ports:
+      - "${{ secrets.POSTGRES_PORT }}:5432"
+    volumes:
+      - hubspot_pgdata:/var/lib/postgresql/data
+
+  hubspot_connect:
+    build: .
+    container_name: hubspot_connect
+    depends_on:
+      - hubspot_db
+    environment:
+      HUBSPOT_API_KEY: ${{ secrets.HUBSPOT_API_KEY }}
+      POSTGRES_HOST: hubspot_db
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+    restart: always
+
+volumes:
+  hubspot_pgdata:
