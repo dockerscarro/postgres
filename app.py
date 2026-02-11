@@ -1,65 +1,65 @@
+import os
 import requests
 import psycopg2
 import logging
-import os
-from contextlib import closing
 
-# ---------------- ENV CONFIG ----------------
-
+# ================= ENV =================
 
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
 
-PG_CONFIG = {
-    "host": os.getenv("POSTGRES_HOST"),
-    "port": int(os.getenv("POSTGRES_PORT", 5432)),
-    "dbname": os.getenv("POSTGRES_DB"),
-    "user": os.getenv("POSTGRES_USER"),
-    "password": os.getenv("POSTGRES_PASSWORD"),
-}
+POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+POSTGRES_DB = os.getenv("POSTGRES_DB")
+POSTGRES_USER = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 
 HUBSPOT_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
+
+# ================= LOGGING =================
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-# ---------- CREATE TABLE ----------
+# ================= DB =================
 
-def create_table_if_not_exists():
-    logging.info("Ensuring hubspot_contacts table exists...")
+def get_connection():
+    return psycopg2.connect(
+        host=POSTGRES_HOST,
+        database=POSTGRES_DB,
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        port=POSTGRES_PORT
+    )
 
-    with closing(psycopg2.connect(**PG_CONFIG)) as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS hubspot_contacts (
-                hubspot_id TEXT PRIMARY KEY,
-                first_name TEXT,
-                last_name TEXT,
-                email TEXT,
-                business_name TEXT,
-                vat_number TEXT,
-                country_ TEXT,
-                number_of_users INTEGER,
-                vendor TEXT,
-                lead_status TEXT,
-                created_date TIMESTAMP,
-                last_activity_date TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT now()
-            );
-            """)
-        conn.commit()
+def create_table(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS hubspot_contacts (
+            hubspot_id TEXT PRIMARY KEY,
+            first_name TEXT,
+            last_name TEXT,
+            email TEXT,
+            business_name TEXT,
+            vat_number TEXT,
+            country_ TEXT,
+            number_of_users INTEGER,
+            vendor TEXT,
+            lead_status TEXT,
+            created_date TIMESTAMP,
+            last_activity_date TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT now()
+        );
+    """)
+    conn.commit()
+    cur.close()
 
-    logging.info("Table is ready.")
-
-# ---------- FETCH HUBSPOT CONTACTS ----------
+# ================= FETCH =================
 
 def fetch_contacts():
-    logging.info("Fetching contacts from HubSpot...")
-
     headers = {
-        "Authorization": f"Bearer {HUBSPOT_API_KEY}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {HUBSPOT_API_KEY}"
     }
 
     params = {
@@ -79,7 +79,7 @@ def fetch_contacts():
         ]
     }
 
-    all_contacts = []
+    contacts = []
     after = None
 
     while True:
@@ -88,8 +88,9 @@ def fetch_contacts():
 
         response = requests.get(HUBSPOT_URL, headers=headers, params=params)
         response.raise_for_status()
+
         data = response.json()
-        all_contacts.extend(data.get("results", []))
+        contacts.extend(data.get("results", []))
 
         paging = data.get("paging")
         if paging and "next" in paging:
@@ -97,81 +98,80 @@ def fetch_contacts():
         else:
             break
 
-    logging.info(f"Fetched {len(all_contacts)} contacts.")
-    return all_contacts
+    return contacts
 
-# ---------- UPSERT INTO POSTGRES ----------
+# ================= LOAD =================
 
-def load_contacts(records):
-    logging.info("Upserting contacts into PostgreSQL...")
+def load_contacts(conn, records):
+    cur = conn.cursor()
 
-    with closing(psycopg2.connect(**PG_CONFIG)) as conn:
-        with conn.cursor() as cur:
-            for contact in records:
-                props = contact.get("properties", {})
+    for contact in records:
+        props = contact.get("properties", {})
 
-                cur.execute("""
-                INSERT INTO hubspot_contacts (
-                    hubspot_id,
-                    first_name,
-                    last_name,
-                    email,
-                    business_name,
-                    vat_number,
-                    country_,
-                    number_of_users,
-                    vendor,
-                    lead_status,
-                    created_date,
-                    last_activity_date,
-                    updated_at
-                )
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
-                ON CONFLICT (hubspot_id) DO UPDATE SET
-                    first_name=EXCLUDED.first_name,
-                    last_name=EXCLUDED.last_name,
-                    email=EXCLUDED.email,
-                    business_name=EXCLUDED.business_name,
-                    vat_number=EXCLUDED.vat_number,
-                    country_=EXCLUDED.country_,
-                    number_of_users=EXCLUDED.number_of_users,
-                    vendor=EXCLUDED.vendor,
-                    lead_status=EXCLUDED.lead_status,
-                    created_date=EXCLUDED.created_date,
-                    last_activity_date=EXCLUDED.last_activity_date,
-                    updated_at=now();
-                """, (
-                    contact["id"],
-                    props.get("firstname"),
-                    props.get("lastname"),
-                    props.get("email"),
-                    props.get("business_name"),
-                    props.get("vat_number"),
-                    props.get("country_"),
-                    int(props.get("number_of_users") or 0),
-                    props.get("vendor"),
-                    props.get("lead_status"),
-                    props.get("createdate"),
-                    props.get("last_activity_date")
-                ))
+        cur.execute("""
+            INSERT INTO hubspot_contacts (
+                hubspot_id,
+                first_name,
+                last_name,
+                email,
+                business_name,
+                vat_number,
+                country_,
+                number_of_users,
+                vendor,
+                lead_status,
+                created_date,
+                last_activity_date,
+                updated_at
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            ON CONFLICT (hubspot_id)
+            DO UPDATE SET
+                first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
+                email = EXCLUDED.email,
+                business_name = EXCLUDED.business_name,
+                vat_number = EXCLUDED.vat_number,
+                country_ = EXCLUDED.country_,
+                number_of_users = EXCLUDED.number_of_users,
+                vendor = EXCLUDED.vendor,
+                lead_status = EXCLUDED.lead_status,
+                created_date = EXCLUDED.created_date,
+                last_activity_date = EXCLUDED.last_activity_date,
+                updated_at = now();
+        """, (
+            contact["id"],
+            props.get("firstname"),
+            props.get("lastname"),
+            props.get("email"),
+            props.get("business_name"),
+            props.get("vat_number"),
+            props.get("country_"),
+            int(props.get("number_of_users") or 0),
+            props.get("vendor"),
+            props.get("lead_status"),
+            props.get("createdate"),
+            props.get("last_activity_date")
+        ))
 
-        conn.commit()
+    conn.commit()
+    cur.close()
 
-    logging.info("Contacts synced successfully.")
+# ================= MAIN =================
 
-# ---------- MAIN ----------
+def run():
+    logging.info("🚀 HubSpot Sync Started")
 
-def run_pipeline():
-    logging.info("🚀 HubSpot sync started")
+    conn = get_connection()
+    create_table(conn)
 
-    if not HUBSPOT_API_KEY:
-        raise ValueError("HUBSPOT_API_KEY is not set")
-
-    create_table_if_not_exists()
     contacts = fetch_contacts()
-    load_contacts(contacts)
+    logging.info(f"Fetched {len(contacts)} contacts")
 
-    logging.info("✅ HubSpot sync completed.")
+    load_contacts(conn, contacts)
+
+    conn.close()
+    logging.info("✅ Sync Completed Successfully")
 
 if __name__ == "__main__":
-    run_pipeline()
+    run()
