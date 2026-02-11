@@ -15,7 +15,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Deploy Everything
+      - name: Deploy
         run: |
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
@@ -23,65 +23,38 @@ jobs:
           set -e
 
           APP_DIR=~/hubspot-sync
-          SYNC_CONTAINER=hubspot_postgres
-          DB_CONTAINER=hubspot_db
+          CONTAINER_NAME=hubspot_connect
           IMAGE_NAME=hubspot-sync:latest
-          NETWORK_NAME=hubspot_network
-          REPO_URL=https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/dockerscarro/postgres.git
-          BRANCH=qa
 
-          echo "🔹 Creating Docker network if not exists..."
-          docker network inspect $NETWORK_NAME >/dev/null 2>&1 || \
-          docker network create $NETWORK_NAME
-
-          echo "🔹 Creating Postgres container if not exists..."
-          if [ ! "$(docker ps -aq -f name=$DB_CONTAINER)" ]; then
-            docker run -d \
-              --name $DB_CONTAINER \
-              --network $NETWORK_NAME \
-              -e POSTGRES_USER='${{ secrets.POSTGRES_USER }}' \
-              -e POSTGRES_PASSWORD='${{ secrets.POSTGRES_PASSWORD }}' \
-              -e POSTGRES_DB='${{ secrets.POSTGRES_DB }}' \
-              -v hubspot_data:/var/lib/postgresql/data \
-              --restart always \
-              -p ${{ secrets.POSTGRES_PORT }}:5432 \
-              postgres:15
-          else
-            echo "✅ Postgres container already exists"
-          fi
-
-          echo "🔹 Updating source code..."
+          echo "Updating repo..."
           if [ ! -d "$APP_DIR" ]; then
-              git clone -b $BRANCH $REPO_URL $APP_DIR
+              git clone https://github.com/dockerscarro/postgres.git $APP_DIR
           else
               cd $APP_DIR
-              git fetch origin
-              git reset --hard origin/$BRANCH
+              git pull
           fi
 
           cd $APP_DIR
 
-          echo "🔹 Removing old sync container..."
-          docker stop $SYNC_CONTAINER 2>/dev/null || true
-          docker rm $SYNC_CONTAINER 2>/dev/null || true
+          echo "Stopping old container..."
+          docker stop $CONTAINER_NAME || true
+          docker rm $CONTAINER_NAME || true
 
-          echo "🔹 Building new image..."
+          echo "Building image..."
           docker build -t $IMAGE_NAME .
 
-          echo "🔹 Running sync container..."
-
+          echo "Starting container..."
           docker run -d \
-            --name $SYNC_CONTAINER \
-            --network $NETWORK_NAME \
+            --name $CONTAINER_NAME \
             --restart always \
+            -v hubspot_pgdata:/var/lib/postgresql \
             -e HUBSPOT_API_KEY='${{ secrets.HUBSPOT_API_KEY }}' \
-            -e POSTGRES_HOST='hubspot_db' \
             -e POSTGRES_DB='${{ secrets.POSTGRES_DB }}' \
             -e POSTGRES_USER='${{ secrets.POSTGRES_USER }}' \
             -e POSTGRES_PASSWORD='${{ secrets.POSTGRES_PASSWORD }}' \
-            -e POSTGRES_PORT='5432' \
+            -e POSTGRES_PORT='${{ secrets.POSTGRES_PORT }}' \
             $IMAGE_NAME
 
-          echo "✅ Deployment completed successfully"
+          echo "Deployment completed"
 
           EOF
