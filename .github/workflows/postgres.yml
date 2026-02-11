@@ -15,10 +15,10 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Deploy and Run Sync
+      - name: Deploy and Restart Container
         run: |
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
-          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
 
           set -e
 
@@ -29,32 +29,42 @@ jobs:
           BRANCH=qa
 
           echo "📦 Updating code..."
-          if [ ! -d "\$APP_DIR" ]; then
-              git clone -b \$BRANCH \$REPO_URL \$APP_DIR
+
+          if [ ! -d "$APP_DIR" ]; then
+              git clone -b $BRANCH $REPO_URL $APP_DIR
           else
-              cd \$APP_DIR
+              cd $APP_DIR
               git fetch origin
-              git reset --hard origin/\$BRANCH
+              git reset --hard origin/$BRANCH
           fi
 
-          cd \$APP_DIR
+          cd $APP_DIR
 
-          echo "🏗 Building image..."
-          docker build -t \$IMAGE_NAME .
+          echo "🛑 Stopping old container (if exists)..."
+          docker stop $CONTAINER_NAME 2>/dev/null || true
+          docker rm $CONTAINER_NAME 2>/dev/null || true
 
-          echo "🛑 Removing old container..."
-          docker rm -f \$CONTAINER_NAME 2>/dev/null || true
+          echo "🧹 Removing old image (optional cleanup)..."
+          docker rmi $IMAGE_NAME 2>/dev/null || true
 
-          echo "🚀 Running sync job..."
-          docker run --name \$CONTAINER_NAME \
+          echo "🏗 Building new image..."
+          docker build -t $IMAGE_NAME .
+
+          echo "🚀 Starting container with host network..."
+
+          docker run -d \
+            --name $CONTAINER_NAME \
+            --restart always \
+            --network host \
             -e HUBSPOT_API_KEY='${{ secrets.HUBSPOT_API_KEY }}' \
-            -e POSTGRES_HOST='${{ secrets.POSTGRES_HOST }}' \
+            -e POSTGRES_HOST='localhost' \
             -e POSTGRES_DB='${{ secrets.POSTGRES_DB }}' \
             -e POSTGRES_USER='${{ secrets.POSTGRES_USER }}' \
             -e POSTGRES_PASSWORD='${{ secrets.POSTGRES_PASSWORD }}' \
             -e POSTGRES_PORT='${{ secrets.POSTGRES_PORT }}' \
-            \$IMAGE_NAME
+            $IMAGE_NAME
 
-          echo "✅ HubSpot Sync Finished"
+          echo "✅ Container running"
+          docker ps | grep $CONTAINER_NAME
 
           EOF
