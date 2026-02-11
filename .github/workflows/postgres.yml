@@ -15,7 +15,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Deploy and Restart Container
+      - name: Deploy and Run Sync
         run: |
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
@@ -29,7 +29,6 @@ jobs:
           BRANCH=qa
 
           echo "📦 Updating code..."
-
           if [ ! -d "\$APP_DIR" ]; then
               git clone -b \$BRANCH \$REPO_URL \$APP_DIR
           else
@@ -40,20 +39,14 @@ jobs:
 
           cd \$APP_DIR
 
-          echo "🛑 Removing old container..."
-
-          docker stop \$CONTAINER_NAME 2>/dev/null || true
-          docker rm \$CONTAINER_NAME 2>/dev/null || true
-
-          echo "🏗 Building new image..."
-
+          echo "🏗 Building image..."
           docker build -t \$IMAGE_NAME .
 
-          echo "🚀 Starting updated container..."
+          echo "🛑 Removing old container..."
+          docker rm -f \$CONTAINER_NAME 2>/dev/null || true
 
-          docker run -d \
-            --name \$CONTAINER_NAME \
-            --restart always \
+          echo "🚀 Running sync job..."
+          docker run --name \$CONTAINER_NAME \
             -e HUBSPOT_API_KEY='${{ secrets.HUBSPOT_API_KEY }}' \
             -e POSTGRES_HOST='${{ secrets.POSTGRES_HOST }}' \
             -e POSTGRES_DB='${{ secrets.POSTGRES_DB }}' \
@@ -62,7 +55,6 @@ jobs:
             -e POSTGRES_PORT='${{ secrets.POSTGRES_PORT }}' \
             \$IMAGE_NAME
 
-          echo "✅ Container restarted with updated code"
-          echo "✅ HubSpot sync will now update contacts"
+          echo "✅ HubSpot Sync Finished"
 
           EOF
