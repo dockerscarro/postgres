@@ -93,7 +93,7 @@ jobs:
           docker run --rm \
             --name hubspot-sync \
             --network hubspot-net \
-            -e HUBSPOT_TOKEN="${{ secrets.HUBSPOT_API_KEY }}" \
+            -e HUBSPOT_API_KEY="${{ secrets.HUBSPOT_API_KEY }}" \
             -e PG_HOST="postgres-hubspot" \
             -e PG_PORT=5432 \
             -e PG_DB="hubspot_db" \
