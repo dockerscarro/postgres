@@ -29,7 +29,6 @@ def parse_timestamp(ts: str):
     """Convert HubSpot ISO timestamp string to Python datetime."""
     if ts:
         try:
-            # HubSpot uses UTC Z notation
             return datetime.fromisoformat(ts.replace("Z", "+00:00"))
         except Exception:
             logging.warning(f"Failed to parse timestamp: {ts}")
@@ -117,43 +116,33 @@ def fetch_contacts():
 def load_contacts(records):
     logging.info("Upserting contacts into PostgreSQL...")
 
+    sql = (
+        "INSERT INTO hubspot_contacts (hubspot_id, first_name, last_name, "
+        "email, business_name, vat_number, country_, number_of_users, "
+        "vendor, lead_status, created_date, last_activity_date, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()) "
+        "ON CONFLICT (hubspot_id) DO UPDATE SET "
+        "first_name = EXCLUDED.first_name, "
+        "last_name = EXCLUDED.last_name, "
+        "email = EXCLUDED.email, "
+        "business_name = EXCLUDED.business_name, "
+        "vat_number = EXCLUDED.vat_number, "
+        "country_ = EXCLUDED.country_, "
+        "number_of_users = EXCLUDED.number_of_users, "
+        "vendor = EXCLUDED.vendor, "
+        "lead_status = EXCLUDED.lead_status, "
+        "created_date = EXCLUDED.created_date, "
+        "last_activity_date = EXCLUDED.last_activity_date, "
+        "updated_at = now()"
+    )
+
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
             for contact in records:
                 props = contact.get("properties", {})
 
                 cur.execute(
-                    """
-                    INSERT INTO hubspot_contacts (
-                        hubspot_id,
-                        first_name,
-                        last_name,
-                        email,
-                        business_name,
-                        vat_number,
-                        country_,
-                        number_of_users,
-                        vendor,
-                        lead_status,
-                        created_date,
-                        last_activity_date,
-                        updated_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
-                    ON CONFLICT (hubspot_id) DO UPDATE SET
-                        first_name = EXCLUDED.first_name,
-                        last_name = EXCLUDED.last_name,
-                        email = EXCLUDED.email,
-                        business_name = EXCLUDED.business_name,
-                        vat_number = EXCLUDED.vat_number,
-                        country_ = EXCLUDED.country_,
-                        number_of_users = EXCLUDED.number_of_users,
-                        vendor = EXCLUDED.vendor,
-                        lead_status = EXCLUDED.lead_status,
-                        created_date = EXCLUDED.created_date,
-                        last_activity_date = EXCLUDED.last_activity_date,
-                        updated_at = now();
-                    """,
+                    sql,
                     (
                         contact.get("id"),
                         props.get("firstname"),
