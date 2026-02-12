@@ -10,18 +10,18 @@ services:
     environment:
       POSTGRES_DB: hubspot_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  # Set via GitHub secret on server
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
 
   hubspot_sync:
     build: .
     container_name: hubspot_sync
-    restart: "no"  # Run once per deployment
+    restart: "no"  # run once per deployment
     depends_on:
       - postgres-hubspot
     environment:
-      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}       # GitHub secret injected
+      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
       POSTGRES_HOST: postgres-hubspot
       POSTGRES_PORT: 5432
       POSTGRES_DB: hubspot_db
