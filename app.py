@@ -35,6 +35,7 @@ def parse_timestamp(ts: str):
             return None
     return None
 
+
 # ---------- CREATE TABLE ----------
 def create_table_if_not_exists():
     logging.info("Ensuring hubspot_contacts table exists...")
@@ -73,6 +74,7 @@ def create_table_if_not_exists():
 
         conn.commit()
     logging.info("Table is ready.")
+
 
 # ---------- FETCH HUBSPOT CONTACTS ----------
 def fetch_contacts():
