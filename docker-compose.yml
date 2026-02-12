@@ -1,16 +1,14 @@
 version: "3.9"
 
 services:
-  postgres:
+  postgres-hubspot:
     image: postgres:15
-    container_name: hubspot_postgres
+    container_name: postgres-hubspot
     restart: always
     ports:
-      - "5435:5432"  # host port mapping (optional)
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      - "5435:5432"  # host:container
+    env_file:
+      - .env
     volumes:
       - pg_data:/var/lib/postgresql/data
 
@@ -18,16 +16,10 @@ services:
     build: .
     container_name: hubspot_sync
     restart: "no"  # run once per deployment
+    env_file:
+      - .env
     depends_on:
-      - postgres
-    environment:
-      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
-      POSTGRES_HOST: ${POSTGRES_HOST}
-      POSTGRES_PORT: ${POSTGRES_PORT}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      - postgres-hubspot
 
 volumes:
   pg_data:
-
