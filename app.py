@@ -42,7 +42,8 @@ def create_table_if_not_exists():
     logging.info("Ensuring hubspot_contacts table exists...")
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS hubspot_contacts (
                     hubspot_id TEXT PRIMARY KEY,
                     first_name TEXT,
@@ -58,7 +59,8 @@ def create_table_if_not_exists():
                     last_activity_date TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT now()
                 );
-            """)
+                """
+            )
         conn.commit()
     logging.info("Table is ready.")
 
@@ -120,7 +122,8 @@ def load_contacts(records):
             for contact in records:
                 props = contact.get("properties", {})
 
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO hubspot_contacts (
                         hubspot_id,
                         first_name,
@@ -150,20 +153,22 @@ def load_contacts(records):
                         created_date = EXCLUDED.created_date,
                         last_activity_date = EXCLUDED.last_activity_date,
                         updated_at = now();
-                """, (
-                    contact.get("id"),
-                    props.get("firstname"),
-                    props.get("lastname"),
-                    props.get("email"),
-                    props.get("business_name"),
-                    props.get("vat_number"),
-                    props.get("country_"),
-                    int(props.get("number_of_users") or 0),
-                    props.get("vendor"),
-                    props.get("lead_status"),
-                    parse_timestamp(props.get("createdate")),
-                    parse_timestamp(props.get("last_activity_date")),
-                ))
+                    """,
+                    (
+                        contact.get("id"),
+                        props.get("firstname"),
+                        props.get("lastname"),
+                        props.get("email"),
+                        props.get("business_name"),
+                        props.get("vat_number"),
+                        props.get("country_"),
+                        int(props.get("number_of_users") or 0),
+                        props.get("vendor"),
+                        props.get("lead_status"),
+                        parse_timestamp(props.get("createdate")),
+                        parse_timestamp(props.get("last_activity_date")),
+                    ),
+                )
         conn.commit()
 
     logging.info(f"{len(records)} contacts synced successfully.")
