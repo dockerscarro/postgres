@@ -5,7 +5,7 @@ import psycopg2
 from contextlib import closing
 from datetime import datetime
 
-# ---------------- ENV CONFIG -----------------
+# ---------------- ENV CONFIG ------------------
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
 
 PG_CONFIG = {
