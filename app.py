@@ -183,10 +183,5 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
-    try:
-        run_pipeline()
-    except Exception as e:
-        logging.exception("❌ HubSpot sync failed!")
-        sys.exit(1)
-    else:
-        sys.exit(0)
+   run_pipeline()
+    
