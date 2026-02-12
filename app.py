@@ -3,6 +3,7 @@ import logging
 import requests
 import psycopg2
 from contextlib import closing
+from datetime import datetime
 
 # ---------------- ENV CONFIG ----------------
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
@@ -23,10 +24,22 @@ logging.basicConfig(
 )
 
 
+# ---------- UTILS ----------
+def parse_timestamp(ts: str):
+    """Convert HubSpot ISO timestamp string to Python datetime."""
+    if ts:
+        try:
+            # HubSpot uses UTC Z notation
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except Exception:
+            logging.warning(f"Failed to parse timestamp: {ts}")
+            return None
+    return None
+
+
 # ---------- CREATE TABLE ----------
 def create_table_if_not_exists():
     logging.info("Ensuring hubspot_contacts table exists...")
-
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -47,7 +60,6 @@ def create_table_if_not_exists():
                 );
             """)
         conn.commit()
-
     logging.info("Table is ready.")
 
 
@@ -124,7 +136,7 @@ def load_contacts(records):
                         last_activity_date,
                         updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                     ON CONFLICT (hubspot_id) DO UPDATE SET
                         first_name = EXCLUDED.first_name,
                         last_name = EXCLUDED.last_name,
@@ -139,7 +151,7 @@ def load_contacts(records):
                         last_activity_date = EXCLUDED.last_activity_date,
                         updated_at = now();
                 """, (
-                    contact["id"],
+                    contact.get("id"),
                     props.get("firstname"),
                     props.get("lastname"),
                     props.get("email"),
@@ -149,18 +161,17 @@ def load_contacts(records):
                     int(props.get("number_of_users") or 0),
                     props.get("vendor"),
                     props.get("lead_status"),
-                    props.get("createdate"),
-                    props.get("last_activity_date"),
+                    parse_timestamp(props.get("createdate")),
+                    parse_timestamp(props.get("last_activity_date")),
                 ))
-
         conn.commit()
 
-    logging.info("Contacts synced successfully.")
+    logging.info(f"{len(records)} contacts synced successfully.")
 
 
 # ---------- MAIN ----------
 def run_pipeline():
-    logging.info("🚀 HubSpot sync started")
+    logging.info("🚀 HubSpot ETL started")
 
     if not HUBSPOT_API_KEY:
         raise ValueError("HUBSPOT_API_KEY is not set")
@@ -169,7 +180,7 @@ def run_pipeline():
     contacts = fetch_contacts()
     load_contacts(contacts)
 
-    logging.info("✅ HubSpot sync completed.")
+    logging.info("✅ HubSpot ETL completed successfully.")
 
 
 if __name__ == "__main__":
