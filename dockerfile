@@ -1,3 +1,4 @@
+# Use Python 3.11 slim base image
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -5,13 +6,15 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
 # Install dependencies for PostgreSQL client
-RUN apt-get update && apt-get install -y gcc libpq-dev curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y gcc libpq-dev curl && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy ETL script
+# Copy ETL scripts
 COPY . .
 
 # Default command: run the ETL
