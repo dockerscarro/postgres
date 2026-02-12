@@ -7,7 +7,7 @@ on:
 
 jobs:
   # -----------------------------
-  # 1️⃣ CI Step: Python checks
+  # 1️⃣ CI Step: Python lint & checks
   # -----------------------------
   ci:
     runs-on: ubuntu-latest
@@ -41,19 +41,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ETL Docker image
+      - name: Build Docker image
         run: docker build -t hubspot-sync:test .
 
-      - name: Run ETL container for smoke test
+      - name: Run container for smoke test
         run: |
           docker run -d --name hubspot-sync-test \
-            --network hubspot-network \
-            -e POSTGRES_HOST=postgres-hubspot \
-            -e POSTGRES_PORT=5432 \
-            -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
-            -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
-            -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
             -e HUBSPOT_API_KEY=${{ secrets.HUBSPOT_API_KEY }} \
+            -e POSTGRES_HOST=host.docker.internal \
+            -e POSTGRES_PORT=5435 \
+            -e POSTGRES_DB=hubspot_db \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
             hubspot-sync:test
           sleep 10
           if [ "$(docker inspect -f '{{.State.Running}}' hubspot-sync-test)" != "true" ]; then
@@ -61,7 +60,7 @@ jobs:
             docker logs hubspot-sync-test
             exit 1
           fi
-          echo "✅ ETL container is running"
+          echo "✅ Container is running"
 
       - name: Print container logs (debug)
         if: always()
@@ -90,32 +89,46 @@ jobs:
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "echo '✅ Connected to server successfully!'"
 
-      - name: Deploy HubSpot ETL via Docker
+      - name: Deploy HubSpot ETL via Docker Compose
         run: |
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
-          set -e
+            set -e
 
-          cd ~/hubspot-sync
+            APP_DIR=~/hubspot-sync
+            REPO_URL=https://github.com/dockerscarro/postgres.git
+            BRANCH=qa
+            PAT_TOKEN=${{ secrets.PAT_TOKEN }}
 
-          # Build ETL image
-          docker build -t hubspot-sync:qa .
+            # Install Docker if missing
+            if ! command -v docker &> /dev/null; then
+                sudo apt update
+                sudo apt install -y docker.io docker-compose git
+                sudo systemctl enable --now docker
+                sudo usermod -aG docker $USER
+            fi
 
-          # Stop and remove previous container
-          if [ "$(docker ps -aq -f name=hubspot_sync)" ]; then
-              docker stop hubspot_sync
-              docker rm hubspot_sync
-          fi
+            # Clone repo if missing, else update
+            if [ ! -d "$APP_DIR" ]; then
+                git clone -b $BRANCH https://$PAT_TOKEN@github.com/dockerscarro/postgres.git $APP_DIR
+            else
+                cd $APP_DIR
+                git fetch --all
+                git reset --hard origin/$BRANCH
+            fi
 
-          # Run ETL container
-          docker run -d --name hubspot_sync \
-            --network hubspot-network \
-            -e POSTGRES_HOST=postgres-hubspot \
-            -e POSTGRES_PORT=5432 \
-            -e POSTGRES_DB=$POSTGRES_DB \
-            -e POSTGRES_USER=$POSTGRES_USER \
-            -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-            -e HUBSPOT_API_KEY=$HUBSPOT_API_KEY \
-            hubspot-sync:qa
-EOF
+            cd $APP_DIR
 
+            # Build and run containers
+            docker-compose --env-file .env -f docker-compose.yml up --build --remove-orphans --force-recreate
+
+            # Verify ETL container started
+            sleep 5
+            if [ "$(docker ps -q -f name=hubspot_sync)" == "" ]; then
+                echo "❌ ETL container did not start!"
+                docker ps -a
+                exit 1
+            fi
+
+            echo "✅ HubSpot ETL deployed and ran successfully!"
+          EOF
