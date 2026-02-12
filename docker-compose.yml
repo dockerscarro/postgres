@@ -1,20 +1,32 @@
 version: "3.9"
 
 services:
+  postgres-hubspot:
+    image: postgres:15
+    container_name: postgres-hubspot
+    restart: always
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_DB: hubspot_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  # Set via GitHub secret on server
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
   hubspot_sync:
     build: .
     container_name: hubspot_sync
-    restart: "no"  # run once per deployment
+    restart: "no"  # Run once per deployment
+    depends_on:
+      - postgres-hubspot
     environment:
-      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
-      POSTGRES_HOST: postgres-hubspot   # existing container name
+      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}       # GitHub secret injected
+      POSTGRES_HOST: postgres-hubspot
       POSTGRES_PORT: 5432
       POSTGRES_DB: hubspot_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    networks:
-      - hubspot-network  # same network as Postgres
 
-networks:
-  hubspot-network:
-    external: true
+volumes:
+  pg_data:
