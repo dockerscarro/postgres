@@ -3,6 +3,7 @@ import logging
 import requests
 import psycopg2
 from contextlib import closing
+import sys
 
 # ---------------- ENV CONFIG ----------------
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
@@ -24,9 +25,8 @@ logging.basicConfig(
 
 
 # ---------- CREATE TABLE ----------
-
-
 def create_table_if_not_exists():
+    """Ensure hubspot_contacts table exists in PostgreSQL."""
     logging.info("Ensuring hubspot_contacts table exists...")
 
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
@@ -56,9 +56,8 @@ def create_table_if_not_exists():
 
 
 # ---------- FETCH HUBSPOT CONTACTS ----------
-
-
 def fetch_contacts():
+    """Fetch contacts from HubSpot API."""
     logging.info("Fetching contacts from HubSpot...")
 
     headers = {
@@ -106,9 +105,8 @@ def fetch_contacts():
 
 
 # ---------- UPSERT INTO POSTGRES ----------
-
-
 def load_contacts(records):
+    """Upsert HubSpot contacts into PostgreSQL."""
     logging.info("Upserting contacts into PostgreSQL...")
 
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
@@ -135,18 +133,18 @@ def load_contacts(records):
                     )
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                     ON CONFLICT (hubspot_id) DO UPDATE SET
-                        first_name = EXCLUDED.first_name,
-                        last_name = EXCLUDED.last_name,
-                        email = EXCLUDED.email,
-                        business_name = EXCLUDED.business_name,
-                        vat_number = EXCLUDED.vat_number,
-                        country_ = EXCLUDED.country_,
-                        number_of_users = EXCLUDED.number_of_users,
-                        vendor = EXCLUDED.vendor,
-                        lead_status = EXCLUDED.lead_status,
-                        created_date = EXCLUDED.created_date,
-                        last_activity_date = EXCLUDED.last_activity_date,
-                        updated_at = now();
+                        first_name=EXCLUDED.first_name,
+                        last_name=EXCLUDED.last_name,
+                        email=EXCLUDED.email,
+                        business_name=EXCLUDED.business_name,
+                        vat_number=EXCLUDED.vat_number,
+                        country_=EXCLUDED.country_,
+                        number_of_users=EXCLUDED.number_of_users,
+                        vendor=EXCLUDED.vendor,
+                        lead_status=EXCLUDED.lead_status,
+                        created_date=EXCLUDED.created_date,
+                        last_activity_date=EXCLUDED.last_activity_date,
+                        updated_at=now();
                     """,
                     (
                         contact["id"],
@@ -170,9 +168,8 @@ def load_contacts(records):
 
 
 # ---------- MAIN ----------
-
-
 def run_pipeline():
+    """Run the HubSpot ETL pipeline."""
     logging.info("🚀 HubSpot sync started")
 
     if not HUBSPOT_API_KEY:
@@ -186,4 +183,10 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    try:
+        run_pipeline()
+    except Exception as e:
+        logging.exception("❌ HubSpot sync failed!")
+        sys.exit(1)
+    else:
+        sys.exit(0)
