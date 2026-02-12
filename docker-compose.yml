@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_DB: hubspot_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  # from .env or secrets
     volumes:
       - pg_data:/var/lib/postgresql/data
 
@@ -21,8 +21,8 @@ services:
     depends_on:
       - postgres-hubspot
     environment:
-      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
-      POSTGRES_HOST: postgres-hubspot
+      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}      # from secrets
+      POSTGRES_HOST: postgres-hubspot          # must match service name
       POSTGRES_PORT: 5432
       POSTGRES_DB: hubspot_db
       POSTGRES_USER: postgres
