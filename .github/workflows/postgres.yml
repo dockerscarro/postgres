@@ -7,7 +7,7 @@ on:
 
 jobs:
   # -----------------------------
-  # 1️⃣ CI Step: Python checks
+  # 1️⃣ CI: Python checks
   # -----------------------------
   ci:
     runs-on: ubuntu-latest
@@ -46,35 +46,44 @@ jobs:
 
       - name: Run container for smoke test
         run: |
-          docker run -d --name hubspot-sync-test \
-          -e HUBSPOT_API_KEY="${{ secrets.HUBSPOT_API_KEY }}" \
-          -e POSTGRES_HOST="postgres-hubspot" \
-          -e POSTGRES_PORT="5432" \
-          -e POSTGRES_DB="hubspot_db" \
-          -e POSTGRES_USER="postgres" \
-          -e POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
-          hubspot-sync:test
+          docker network create hubspot-test-net || true
+          docker run -d \
+            --name postgres-hubspot \
+            --network hubspot-test-net \
+            -e POSTGRES_DB=hubspot_db \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            postgres:15
 
           sleep 10
+
+          docker run -d \
+            --name hubspot-sync-test \
+            --network hubspot-test-net \
+            -e HUBSPOT_API_KEY="${{ secrets.HUBSPOT_API_KEY }}" \
+            -e POSTGRES_HOST="postgres-hubspot" \
+            -e POSTGRES_PORT=5432 \
+            -e POSTGRES_DB="hubspot_db" \
+            -e POSTGRES_USER="postgres" \
+            -e POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            hubspot-sync:test
+
+          sleep 15
           if [ "$(docker inspect -f '{{.State.Running}}' hubspot-sync-test)" != "true" ]; then
-            echo "❌ Container crashed or exited"
+            echo "❌ ETL container crashed"
             docker logs hubspot-sync-test
             exit 1
           fi
-          echo "✅ Container is running"
-
-      - name: Print container logs (debug)
-        if: always()
-        run: docker logs hubspot-sync-test
+          echo "✅ ETL container is running"
 
       - name: Cleanup
         if: always()
         run: |
-          docker stop hubspot-sync-test
-          docker rm hubspot-sync-test
+          docker rm -f hubspot-sync-test postgres-hubspot || true
+          docker network rm hubspot-test-net || true
 
   # -----------------------------
-  # 3️⃣ Deploy to Server
+  # 3️⃣ Deploy to Server via SSH
   # -----------------------------
   deploy-to-server:
     needs: docker-test
@@ -85,23 +94,17 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Test SSH connection
-        run: |
-          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
-          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "echo '✅ Connected to server successfully!'"
-
-      - name: Deploy HubSpot ETL via Docker Compose
+      - name: Deploy via Docker Compose
         run: |
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
           set -e
 
           APP_DIR=~/hubspot-sync
-          REPO_URL=https://github.com/dockerscarro/postgres.git
-          BRANCH=qa
           PAT_TOKEN=${{ secrets.PAT_TOKEN }}
+          BRANCH=qa
 
-          # Install Docker if missing
+          # Install Docker/Docker Compose if missing
           if ! command -v docker &> /dev/null; then
               sudo apt update
               sudo apt install -y docker.io docker-compose git
@@ -109,7 +112,7 @@ jobs:
               sudo usermod -aG docker $USER
           fi
 
-          # Clone repo if missing, else update
+          # Clone repo if missing
           if [ ! -d "$APP_DIR" ]; then
               git clone -b $BRANCH https://$PAT_TOKEN@github.com/dockerscarro/postgres.git $APP_DIR
           else
@@ -120,16 +123,16 @@ jobs:
 
           cd $APP_DIR
 
-          # Build and run containers
-          docker-compose --env-file .env -f docker-compose.yml up --build --remove-orphans --force-recreate
+          # Use existing Postgres container
+          docker-compose --env-file .env -f docker-compose.yml up --build -d hubspot_sync
 
-          # Verify ETL container started
-          sleep 5
+          # Verify container is running
+          sleep 10
           if [ "$(docker ps -q -f name=hubspot_sync)" == "" ]; then
-              echo "❌ ETL container did not start!"
+              echo "❌ HubSpot ETL container did not start"
               docker ps -a
               exit 1
           fi
 
-          echo "✅ HubSpot ETL deployed and ran successfully!"
+          echo "✅ HubSpot ETL deployed successfully"
           EOF
