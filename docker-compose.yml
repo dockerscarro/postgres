@@ -1,0 +1,20 @@
+version: "3.9"
+
+networks:
+  hubspot-net:
+    external: true   # Use existing Docker network on the server
+
+services:
+  hubspot_sync:
+    build: .
+    image: hubspot-sync:latest
+    environment:
+      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
+      POSTGRES_HOST: postgres-hubspot
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: hubspot_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - hubspot-net
+    restart: "no"
