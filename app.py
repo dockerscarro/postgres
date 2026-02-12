@@ -8,7 +8,7 @@ from contextlib import closing
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
 
 PG_CONFIG = {
-    "host": os.getenv("POSTGRES_HOST"),
+    "host": os.getenv("POSTGRES_HOST"),  # <-- DO NOT USE 'localhost'
     "port": int(os.getenv("POSTGRES_PORT", 5432)),
     "dbname": os.getenv("POSTGRES_DB"),
     "user": os.getenv("POSTGRES_USER"),
@@ -22,11 +22,8 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-
-# ---------- CREATE TABLE ----------
 def create_table_if_not_exists():
     logging.info("Ensuring hubspot_contacts table exists...")
-
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -47,82 +44,50 @@ def create_table_if_not_exists():
             );
             """)
         conn.commit()
-
     logging.info("Table is ready.")
 
-
-# ---------- FETCH HUBSPOT CONTACTS ----------
 def fetch_contacts():
     logging.info("Fetching contacts from HubSpot...")
-
     headers = {
         "Authorization": f"Bearer {HUBSPOT_API_KEY}",
         "Content-Type": "application/json"
     }
-
     params = {
         "limit": 100,
         "properties": [
-            "firstname",
-            "lastname",
-            "email",
-            "business_name",
-            "vat_number",
-            "country_",
-            "number_of_users",
-            "vendor",
-            "lead_status",
-            "createdate",
-            "last_activity_date"
+            "firstname", "lastname", "email", "business_name",
+            "vat_number", "country_", "number_of_users",
+            "vendor", "lead_status", "createdate", "last_activity_date"
         ]
     }
 
     all_contacts = []
     after = None
-
     while True:
         if after:
             params["after"] = after
-
         response = requests.get(HUBSPOT_URL, headers=headers, params=params)
         response.raise_for_status()
         data = response.json()
         all_contacts.extend(data.get("results", []))
-
         paging = data.get("paging")
         if paging and "next" in paging:
             after = paging["next"]["after"]
         else:
             break
-
     logging.info(f"Fetched {len(all_contacts)} contacts.")
     return all_contacts
 
-
-# ---------- UPSERT INTO POSTGRES ----------
 def load_contacts(records):
     logging.info("Upserting contacts into PostgreSQL...")
-
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
             for contact in records:
                 props = contact.get("properties", {})
-
                 cur.execute("""
                 INSERT INTO hubspot_contacts (
-                    hubspot_id,
-                    first_name,
-                    last_name,
-                    email,
-                    business_name,
-                    vat_number,
-                    country_,
-                    number_of_users,
-                    vendor,
-                    lead_status,
-                    created_date,
-                    last_activity_date,
-                    updated_at
+                    hubspot_id, first_name, last_name, email, business_name, vat_number,
+                    country_, number_of_users, vendor, lead_status, created_date, last_activity_date, updated_at
                 )
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                 ON CONFLICT (hubspot_id) DO UPDATE SET
@@ -139,38 +104,23 @@ def load_contacts(records):
                     last_activity_date=EXCLUDED.last_activity_date,
                     updated_at=now();
                 """, (
-                    contact["id"],
-                    props.get("firstname"),
-                    props.get("lastname"),
-                    props.get("email"),
-                    props.get("business_name"),
-                    props.get("vat_number"),
-                    props.get("country_"),
-                    int(props.get("number_of_users") or 0),
-                    props.get("vendor"),
-                    props.get("lead_status"),
-                    props.get("createdate"),
-                    props.get("last_activity_date")
+                    contact["id"], props.get("firstname"), props.get("lastname"),
+                    props.get("email"), props.get("business_name"), props.get("vat_number"),
+                    props.get("country_"), int(props.get("number_of_users") or 0),
+                    props.get("vendor"), props.get("lead_status"),
+                    props.get("createdate"), props.get("last_activity_date")
                 ))
-
         conn.commit()
-
     logging.info("Contacts synced successfully.")
 
-
-# ---------- MAIN ----------
 def run_pipeline():
     logging.info("🚀 HubSpot sync started")
-
     if not HUBSPOT_API_KEY:
         raise ValueError("HUBSPOT_API_KEY is not set")
-
     create_table_if_not_exists()
     contacts = fetch_contacts()
     load_contacts(contacts)
-
     logging.info("✅ HubSpot sync completed.")
-
 
 if __name__ == "__main__":
     run_pipeline()
