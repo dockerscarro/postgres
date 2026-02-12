@@ -1,4 +1,3 @@
-
 name: CI/CD Pipeline (QA - HubSpot ETL)
 
 on:
@@ -30,9 +29,9 @@ jobs:
           flake8 .
 
   # -----------------------------
-  # 2️⃣ Docker Build & Smoke Test
+  # 2️⃣ Docker Build
   # -----------------------------
-  docker-test:
+  docker-build:
     needs: ci
     runs-on: ubuntu-latest
     steps:
@@ -42,39 +41,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
-        run: docker build -t hubspot-sync:test .
-
-      - name: Run ETL container for smoke test
-        run: |
-          # Check that Postgres container exists (assume same host or test network)
-          if [ "$(docker ps -q -f name=postgres-hubspot)" == "" ]; then
-            echo "❌ Postgres container 'postgres-hubspot' is not running"
-            exit 1
-          fi
-
-          # Run ETL container connected to existing Postgres container
-          docker network create hubspot-test-net || true
-          docker network connect hubspot-test-net postgres-hubspot || true
-
-          docker run --rm \
-            --name hubspot-sync-test \
-            --network hubspot-test-net \
-            -e HUBSPOT_TOKEN="${{ secrets.HUBSPOT_TOKEN }}" \
-            -e PG_HOST="postgres-hubspot" \
-            -e PG_PORT=5432 \
-            -e PG_DB="hubspot_db" \
-            -e PG_USER="postgres" \
-            -e PG_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
-            hubspot-sync:test
-
-          echo "✅ ETL container ran successfully"
+      - name: Build ETL Docker image
+        run: docker build -t hubspot-sync:latest .
 
   # -----------------------------
-  # 3️⃣ Deploy to Server via SSH
+  # 3️⃣ Deploy & Run on Server
   # -----------------------------
   deploy-to-server:
-    needs: docker-test
+    needs: docker-build
     runs-on: ubuntu-latest
     steps:
       - name: Setup SSH
@@ -82,7 +56,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Deploy via Docker Compose
+      - name: Deploy ETL container on server
         run: |
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
@@ -91,7 +65,7 @@ jobs:
           APP_DIR=~/hubspot-sync
           BRANCH=qa
 
-          # Clone repo if missing
+          # Clone repo if missing, or update it
           if [ ! -d "$APP_DIR" ]; then
               git clone -b $BRANCH https://$PAT_TOKEN@github.com/dockerscarro/postgres.git $APP_DIR
           else
@@ -102,25 +76,30 @@ jobs:
 
           cd $APP_DIR
 
+          # Build ETL Docker image on the server
+          docker build -t hubspot-sync:latest .
+
           # Ensure Postgres container exists
           if [ "$(docker ps -q -f name=postgres-hubspot)" == "" ]; then
               echo "❌ Postgres container 'postgres-hubspot' is not running"
               exit 1
           fi
 
-          # Deploy ETL container connected to existing Postgres container
+          # Create/connect Docker network for ETL to Postgres
           docker network create hubspot-net || true
-          docker network connect hubspot-net postgres-hubspot || true
+          docker network connect hubspot-net postgres-hubspot || true || true
 
-          docker-compose --env-file .env -f docker-compose.yml up --build -d hubspot_sync
+          # Run ETL container connected to existing Postgres container
+          docker run --rm \
+            --name hubspot-sync \
+            --network hubspot-net \
+            -e HUBSPOT_TOKEN="${{ secrets.HUBSPOT_API_KEY }}" \
+            -e PG_HOST="postgres-hubspot" \
+            -e PG_PORT=5432 \
+            -e PG_DB="hubspot_db" \
+            -e PG_USER="postgres" \
+            -e PG_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            hubspot-sync:latest
 
-          # Verify ETL container
-          sleep 10
-          if [ "$(docker ps -q -f name=hubspot_sync)" == "" ]; then
-              echo "❌ HubSpot ETL container did not start"
-              docker ps -a
-              exit 1
-          fi
-
-          echo "✅ HubSpot ETL deployed successfully"
+          echo "✅ HubSpot ETL container ran successfully on server"
           EOF
