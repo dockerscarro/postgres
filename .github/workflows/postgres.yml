@@ -1,1 +1,42 @@
+name: Deploy HubSpot Sync
+
+on:
+  push:
+    branches:
+      - qa
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Deploy to Server
+        run: |
+          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+
+          set -e
+          APP_DIR=~/hubspot-sync
+
+          # Clone or update repo
+          if [ ! -d "$APP_DIR" ]; then
+              git clone -b qa https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/dockerscarro/postgres.git $APP_DIR
+          else
+              cd $APP_DIR
+              git fetch origin
+              git reset --hard origin/qa
+          fi
+
+          cd $APP_DIR
+
+          echo "🏗 Building containers..."
+          docker-compose --env-file .env -f docker-compose.yml up --build --remove-orphans --force-recreate
+
+          echo "✅ HubSpot ETL completed successfully!"
+EOF
 
