@@ -1,1 +1,126 @@
 
+name: CI/CD Pipeline (QA - HubSpot ETL)
+
+on:
+  push:
+    branches:
+      - qa
+
+jobs:
+  # -----------------------------
+  # 1️⃣ CI: Python checks
+  # -----------------------------
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Python lint
+        run: |
+          pip install flake8
+          flake8 .
+
+  # -----------------------------
+  # 2️⃣ Docker Build & Smoke Test
+  # -----------------------------
+  docker-test:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: docker build -t hubspot-sync:test .
+
+      - name: Run ETL container for smoke test
+        run: |
+          # Check that Postgres container exists (assume same host or test network)
+          if [ "$(docker ps -q -f name=postgres-hubspot)" == "" ]; then
+            echo "❌ Postgres container 'postgres-hubspot' is not running"
+            exit 1
+          fi
+
+          # Run ETL container connected to existing Postgres container
+          docker network create hubspot-test-net || true
+          docker network connect hubspot-test-net postgres-hubspot || true
+
+          docker run --rm \
+            --name hubspot-sync-test \
+            --network hubspot-test-net \
+            -e HUBSPOT_TOKEN="${{ secrets.HUBSPOT_TOKEN }}" \
+            -e PG_HOST="postgres-hubspot" \
+            -e PG_PORT=5432 \
+            -e PG_DB="hubspot_db" \
+            -e PG_USER="postgres" \
+            -e PG_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            hubspot-sync:test
+
+          echo "✅ ETL container ran successfully"
+
+  # -----------------------------
+  # 3️⃣ Deploy to Server via SSH
+  # -----------------------------
+  deploy-to-server:
+    needs: docker-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Deploy via Docker Compose
+        run: |
+          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+          set -e
+
+          APP_DIR=~/hubspot-sync
+          BRANCH=qa
+
+          # Clone repo if missing
+          if [ ! -d "$APP_DIR" ]; then
+              git clone -b $BRANCH https://$PAT_TOKEN@github.com/dockerscarro/postgres.git $APP_DIR
+          else
+              cd $APP_DIR
+              git fetch --all
+              git reset --hard origin/$BRANCH
+          fi
+
+          cd $APP_DIR
+
+          # Ensure Postgres container exists
+          if [ "$(docker ps -q -f name=postgres-hubspot)" == "" ]; then
+              echo "❌ Postgres container 'postgres-hubspot' is not running"
+              exit 1
+          fi
+
+          # Deploy ETL container connected to existing Postgres container
+          docker network create hubspot-net || true
+          docker network connect hubspot-net postgres-hubspot || true
+
+          docker-compose --env-file .env -f docker-compose.yml up --build -d hubspot_sync
+
+          # Verify ETL container
+          sleep 10
+          if [ "$(docker ps -q -f name=hubspot_sync)" == "" ]; then
+              echo "❌ HubSpot ETL container did not start"
+              docker ps -a
+              exit 1
+          fi
+
+          echo "✅ HubSpot ETL deployed successfully"
+          EOF
