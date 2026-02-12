@@ -36,21 +36,20 @@ def parse_timestamp(ts: str):
     return None
 
 
-# ---------- CREATE TABLE ----------
 def create_table_if_not_exists():
     logging.info("Ensuring hubspot_contacts table exists...")
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
-            # Create table if it doesn't exist (minimal)
+            # Create table if it doesn't exist (hubspot_id only, no PK constraint)
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS hubspot_contacts (
-                    hubspot_id TEXT PRIMARY KEY
+                    hubspot_id TEXT
                 );
                 """
             )
 
-            # Add missing columns safely
+            # Add missing columns safely (without PRIMARY KEY)
             columns = {
                 "first_name": "TEXT",
                 "last_name": "TEXT",
