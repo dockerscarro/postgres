@@ -1,1 +1,102 @@
+name: CI/CD Pipeline (QA - HubSpot ETL)
+
+on:
+  push:
+    branches:
+      - qa
+
+jobs:
+  # -----------------------------
+  # 1️⃣ CI: Python checks
+  # -----------------------------
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run lint
+        run: |
+          pip install flake8
+          flake8 .
+
+  # -----------------------------
+  # 2️⃣ Docker Build
+  # -----------------------------
+  docker-build:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ETL Docker image
+        run: docker build -t hubspot-sync:latest .
+
+  # -----------------------------
+  # 3️⃣ Deploy & Run on Server
+  # -----------------------------
+  deploy-to-server:
+    needs: docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Deploy ETL container on server
+        run: |
+          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+          set -e
+
+          APP_DIR=~/hubspot-sync
+          BRANCH=qa
+
+          # Clone repo if missing, else update
+          if [ ! -d "$APP_DIR" ]; then
+              git clone -b $BRANCH https://$PAT_TOKEN@github.com/dockerscarro/postgres.git $APP_DIR
+          else
+              cd $APP_DIR
+              git fetch --all
+              git reset --hard origin/$BRANCH
+          fi
+          cd $APP_DIR
+
+          # Build ETL Docker image
+          docker build -t hubspot-sync:latest .
+
+          # Ensure Postgres container exists
+          if [ "$(docker ps -q -f name=postgres-hubspot)" == "" ]; then
+              echo "❌ Postgres container 'postgres-hubspot' is not running"
+              exit 1
+          fi
+
+          # Ensure network exists
+          docker network create hubspot-net || true
+          docker network connect hubspot-net postgres-hubspot || true || true
+
+          # Run ETL container
+          docker run --rm \
+            --name hubspot-sync \
+            --network hubspot-net \
+            -e HUBSPOT_API_KEY="${{ secrets.HUBSPOT_API_KEY }}" \
+            -e POSTGRES_HOST="postgres-hubspot" \
+            -e POSTGRES_PORT=5432 \
+            -e POSTGRES_DB="hubspot_db" \
+            -e POSTGRES_USER="postgres" \
+            -e POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            hubspot-sync:latest
+
+          echo "✅ HubSpot ETL container ran successfully"
+          EOF
 
