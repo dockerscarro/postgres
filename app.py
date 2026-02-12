@@ -41,27 +41,40 @@ def create_table_if_not_exists():
     logging.info("Ensuring hubspot_contacts table exists...")
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
+            # Create table if it doesn't exist (minimal)
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS hubspot_contacts (
-                    hubspot_id TEXT PRIMARY KEY,
-                    first_name TEXT,
-                    last_name TEXT,
-                    email TEXT,
-                    business_name TEXT,
-                    vat_number TEXT,
-                    country_ TEXT,
-                    number_of_users INTEGER,
-                    vendor TEXT,
-                    lead_status TEXT,
-                    created_date TIMESTAMP,
-                    last_activity_date TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT now()
+                    hubspot_id TEXT PRIMARY KEY
                 );
                 """
             )
+
+            # Add missing columns safely
+            columns = {
+                "first_name": "TEXT",
+                "last_name": "TEXT",
+                "email": "TEXT",
+                "business_name": "TEXT",
+                "vat_number": "TEXT",
+                "country_": "TEXT",
+                "number_of_users": "INTEGER",
+                "vendor": "TEXT",
+                "lead_status": "TEXT",
+                "created_date": "TIMESTAMP",
+                "last_activity_date": "TIMESTAMP",
+                "updated_at": "TIMESTAMP DEFAULT now()",
+            }
+
+            for col, col_type in columns.items():
+                cur.execute(
+                    f"ALTER TABLE hubspot_contacts "
+                    f"ADD COLUMN IF NOT EXISTS {col} {col_type};"
+                )
+
         conn.commit()
     logging.info("Table is ready.")
+
 
 
 # ---------- FETCH HUBSPOT CONTACTS ----------
