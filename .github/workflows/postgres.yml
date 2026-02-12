@@ -7,7 +7,7 @@ on:
 
 jobs:
   # -----------------------------
-  # 1️⃣ CI Step: Python lint & checks
+  # 1️⃣ CI Step: Python checks
   # -----------------------------
   ci:
     runs-on: ubuntu-latest
@@ -47,13 +47,14 @@ jobs:
       - name: Run container for smoke test
         run: |
           docker run -d --name hubspot-sync-test \
-            -e HUBSPOT_API_KEY=${{ secrets.HUBSPOT_API_KEY }} \
-            -e POSTGRES_HOST=host.docker.internal \
-            -e POSTGRES_PORT=5435 \
-            -e POSTGRES_DB=hubspot_db \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
-            hubspot-sync:test
+          -e HUBSPOT_API_KEY="${{ secrets.HUBSPOT_API_KEY }}" \
+          -e POSTGRES_HOST="postgres-hubspot" \
+          -e POSTGRES_PORT="5432" \
+          -e POSTGRES_DB="hubspot_db" \
+          -e POSTGRES_USER="postgres" \
+          -e POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+          hubspot-sync:test
+
           sleep 10
           if [ "$(docker inspect -f '{{.State.Running}}' hubspot-sync-test)" != "true" ]; then
             echo "❌ Container crashed or exited"
@@ -93,42 +94,42 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
-            set -e
+          set -e
 
-            APP_DIR=~/hubspot-sync
-            REPO_URL=https://github.com/dockerscarro/postgres.git
-            BRANCH=qa
-            PAT_TOKEN=${{ secrets.PAT_TOKEN }}
+          APP_DIR=~/hubspot-sync
+          REPO_URL=https://github.com/dockerscarro/postgres.git
+          BRANCH=qa
+          PAT_TOKEN=${{ secrets.PAT_TOKEN }}
 
-            # Install Docker if missing
-            if ! command -v docker &> /dev/null; then
-                sudo apt update
-                sudo apt install -y docker.io docker-compose git
-                sudo systemctl enable --now docker
-                sudo usermod -aG docker $USER
-            fi
+          # Install Docker if missing
+          if ! command -v docker &> /dev/null; then
+              sudo apt update
+              sudo apt install -y docker.io docker-compose git
+              sudo systemctl enable --now docker
+              sudo usermod -aG docker $USER
+          fi
 
-            # Clone repo if missing, else update
-            if [ ! -d "$APP_DIR" ]; then
-                git clone -b $BRANCH https://$PAT_TOKEN@github.com/dockerscarro/postgres.git $APP_DIR
-            else
-                cd $APP_DIR
-                git fetch --all
-                git reset --hard origin/$BRANCH
-            fi
+          # Clone repo if missing, else update
+          if [ ! -d "$APP_DIR" ]; then
+              git clone -b $BRANCH https://$PAT_TOKEN@github.com/dockerscarro/postgres.git $APP_DIR
+          else
+              cd $APP_DIR
+              git fetch --all
+              git reset --hard origin/$BRANCH
+          fi
 
-            cd $APP_DIR
+          cd $APP_DIR
 
-            # Build and run containers
-            docker-compose --env-file .env -f docker-compose.yml up --build --remove-orphans --force-recreate
+          # Build and run containers
+          docker-compose --env-file .env -f docker-compose.yml up --build --remove-orphans --force-recreate
 
-            # Verify ETL container started
-            sleep 5
-            if [ "$(docker ps -q -f name=hubspot_sync)" == "" ]; then
-                echo "❌ ETL container did not start!"
-                docker ps -a
-                exit 1
-            fi
+          # Verify ETL container started
+          sleep 5
+          if [ "$(docker ps -q -f name=hubspot_sync)" == "" ]; then
+              echo "❌ ETL container did not start!"
+              docker ps -a
+              exit 1
+          fi
 
-            echo "✅ HubSpot ETL deployed and ran successfully!"
+          echo "✅ HubSpot ETL deployed and ran successfully!"
           EOF
