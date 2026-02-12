@@ -1,9 +1,8 @@
+import os
+import logging
 import requests
 import psycopg2
-import logging
-import os
 from contextlib import closing
-
 
 # ---------------- ENV CONFIG ----------------
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
@@ -20,7 +19,7 @@ HUBSPOT_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
 
@@ -30,8 +29,7 @@ def create_table_if_not_exists():
 
     with closing(psycopg2.connect(**PG_CONFIG)) as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS hubspot_contacts (
                     hubspot_id TEXT PRIMARY KEY,
                     first_name TEXT,
@@ -47,8 +45,7 @@ def create_table_if_not_exists():
                     last_activity_date TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT now()
                 );
-                """
-            )
+            """)
         conn.commit()
 
     logging.info("Table is ready.")
@@ -87,11 +84,7 @@ def fetch_contacts():
         if after:
             params["after"] = after
 
-        response = requests.get(
-            HUBSPOT_URL,
-            headers=headers,
-            params=params
-        )
+        response = requests.get(HUBSPOT_URL, headers=headers, params=params)
         response.raise_for_status()
         data = response.json()
         all_contacts.extend(data.get("results", []))
@@ -115,8 +108,7 @@ def load_contacts(records):
             for contact in records:
                 props = contact.get("properties", {})
 
-                cur.execute(
-                    """
+                cur.execute("""
                     INSERT INTO hubspot_contacts (
                         hubspot_id,
                         first_name,
@@ -132,36 +124,34 @@ def load_contacts(records):
                         last_activity_date,
                         updated_at
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                     ON CONFLICT (hubspot_id) DO UPDATE SET
-                        first_name=EXCLUDED.first_name,
-                        last_name=EXCLUDED.last_name,
-                        email=EXCLUDED.email,
-                        business_name=EXCLUDED.business_name,
-                        vat_number=EXCLUDED.vat_number,
-                        country_=EXCLUDED.country_,
-                        number_of_users=EXCLUDED.number_of_users,
-                        vendor=EXCLUDED.vendor,
-                        lead_status=EXCLUDED.lead_status,
-                        created_date=EXCLUDED.created_date,
-                        last_activity_date=EXCLUDED.last_activity_date,
-                        updated_at=now();
-                    """,
-                    (
-                        contact["id"],
-                        props.get("firstname"),
-                        props.get("lastname"),
-                        props.get("email"),
-                        props.get("business_name"),
-                        props.get("vat_number"),
-                        props.get("country_"),
-                        int(props.get("number_of_users") or 0),
-                        props.get("vendor"),
-                        props.get("lead_status"),
-                        props.get("createdate"),
-                        props.get("last_activity_date"),
-                    ),
-                )
+                        first_name = EXCLUDED.first_name,
+                        last_name = EXCLUDED.last_name,
+                        email = EXCLUDED.email,
+                        business_name = EXCLUDED.business_name,
+                        vat_number = EXCLUDED.vat_number,
+                        country_ = EXCLUDED.country_,
+                        number_of_users = EXCLUDED.number_of_users,
+                        vendor = EXCLUDED.vendor,
+                        lead_status = EXCLUDED.lead_status,
+                        created_date = EXCLUDED.created_date,
+                        last_activity_date = EXCLUDED.last_activity_date,
+                        updated_at = now();
+                """, (
+                    contact["id"],
+                    props.get("firstname"),
+                    props.get("lastname"),
+                    props.get("email"),
+                    props.get("business_name"),
+                    props.get("vat_number"),
+                    props.get("country_"),
+                    int(props.get("number_of_users") or 0),
+                    props.get("vendor"),
+                    props.get("lead_status"),
+                    props.get("createdate"),
+                    props.get("last_activity_date"),
+                ))
 
         conn.commit()
 
