@@ -1,1 +1,121 @@
+name: CI/CD Pipeline (QA - HubSpot ETL)
+
+on:
+  push:
+    branches:
+      - qa
+
+jobs:
+  # -----------------------------
+  # 1️⃣ CI Step: Python checks
+  # -----------------------------
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Python lint
+        run: |
+          pip install flake8
+          flake8 .
+
+  # -----------------------------
+  # 2️⃣ Docker Build & Smoke Test
+  # -----------------------------
+  docker-test:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ETL Docker image
+        run: docker build -t hubspot-sync:test .
+
+      - name: Run ETL container for smoke test
+        run: |
+          docker run -d --name hubspot-sync-test \
+            --network hubspot-network \
+            -e POSTGRES_HOST=postgres-hubspot \
+            -e POSTGRES_PORT=5432 \
+            -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+            -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
+            -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+            -e HUBSPOT_API_KEY=${{ secrets.HUBSPOT_API_KEY }} \
+            hubspot-sync:test
+          sleep 10
+          if [ "$(docker inspect -f '{{.State.Running}}' hubspot-sync-test)" != "true" ]; then
+            echo "❌ Container crashed or exited"
+            docker logs hubspot-sync-test
+            exit 1
+          fi
+          echo "✅ ETL container is running"
+
+      - name: Print container logs (debug)
+        if: always()
+        run: docker logs hubspot-sync-test
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop hubspot-sync-test
+          docker rm hubspot-sync-test
+
+  # -----------------------------
+  # 3️⃣ Deploy to Server
+  # -----------------------------
+  deploy-to-server:
+    needs: docker-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Test SSH connection
+        run: |
+          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "echo '✅ Connected to server successfully!'"
+
+      - name: Deploy HubSpot ETL via Docker
+        run: |
+          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+          set -e
+
+          cd ~/hubspot-sync
+
+          # Build ETL image
+          docker build -t hubspot-sync:qa .
+
+          # Stop and remove previous container
+          if [ "$(docker ps -aq -f name=hubspot_sync)" ]; then
+              docker stop hubspot_sync
+              docker rm hubspot_sync
+          fi
+
+          # Run ETL container
+          docker run -d --name hubspot_sync \
+            --network hubspot-network \
+            -e POSTGRES_HOST=postgres-hubspot \
+            -e POSTGRES_PORT=5432 \
+            -e POSTGRES_DB=$POSTGRES_DB \
+            -e POSTGRES_USER=$POSTGRES_USER \
+            -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+            -e HUBSPOT_API_KEY=$HUBSPOT_API_KEY \
+            hubspot-sync:qa
+            EOF
 
