@@ -1,4 +1,4 @@
-# HubSpot ETL container
+## HubSpot ETL container
 FROM python:3.11-slim
 
 WORKDIR /app
